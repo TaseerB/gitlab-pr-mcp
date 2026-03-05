@@ -108,6 +108,7 @@ def create_merge_request(
         if response.status_code == 201:
             data = response.json()
             web_url = data.get("web_url", "URL not found")
+            logger.info(f"Successfully created Merge Request: {web_url}")
             return f"Success! Merge Request created: {web_url}"
         else:
             logger.error(f"GitLab API Error: {response.text}")
@@ -117,5 +118,83 @@ def create_merge_request(
         logger.exception("Unexpected error creating merge request")
         return f"An unexpected error occurred: {str(e)}"
 
+
+@mcp.tool()
+def list_merge_requests(
+    state: str = "opened",
+    limit: int = 10
+) -> str:
+    """List merge requests in the GitLab project.
+    
+    Args:
+        state: State of the merge requests to list (e.g., 'opened', 'closed', 'merged', 'all').
+        limit: Maximum number of merge requests to return.
+    """
+    
+    # Get configuration from environment variables
+    gitlab_token = os.environ.get("GITLAB_TOKEN")
+    project_id = os.environ.get("GITLAB_PROJECT_ID")
+    gitlab_url = os.environ.get("GITLAB_URL", "https://gitlab.com")
+
+    if not gitlab_token or not project_id:
+        return "Error: GITLAB_TOKEN and GITLAB_PROJECT_ID environment variables must be set."
+
+    # Prepare API request
+    api_url = f"{gitlab_url}/api/v4/projects/{project_id}/merge_requests"
+    headers = {
+        "Private-Token": gitlab_token
+    }
+    params = {
+        "state": state,
+        "per_page": limit,
+        "order_by": "updated_at",
+        "sort": "desc"
+    }
+
+    try:
+        logger.info(f"Fetching {state} merge requests (limit: {limit})")
+        response = requests.get(api_url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            mrs = response.json()
+            if not mrs:
+                return f"No {state} merge requests found."
+            
+            result = [f"Found {len(mrs)} '{state}' merge requests:\n"]
+            for mr in mrs:
+                title = mr.get("title", "No Title")
+                author_name = mr.get("author", {}).get("name", "Unknown Author")
+                web_url = mr.get("web_url", "")
+                
+                result.append(f"- {title}")
+                result.append(f"  Author: {author_name}")
+                if web_url:
+                    result.append(f"  URL: {web_url}")
+                result.append("") # Add a blank line for readability
+                
+            return "\n".join(result)
+        else:
+            logger.error(f"GitLab API Error: {response.text}")
+            return f"Failed to list merge requests. Status: {response.status_code}. Error: {response.text}"
+            
+    except Exception as e:
+        logger.exception("Unexpected error listing merge requests")
+        return f"An unexpected error occurred: {str(e)}"
+
+
 if __name__ == "__main__":
+    logger.info("Initializing GitLab PR MCP Server...")
+    
+    # Verify environment variables
+    if not os.environ.get("GITLAB_TOKEN"):
+        logger.warning("GITLAB_TOKEN is not set.")
+    else:
+        logger.info("GITLAB_TOKEN is set.")
+        
+    if not os.environ.get("GITLAB_PROJECT_ID"):
+        logger.warning("GITLAB_PROJECT_ID is not set.")
+    else:
+        logger.info(f"GITLAB_PROJECT_ID is set to {os.environ.get('GITLAB_PROJECT_ID')}.")
+        
+    logger.info("Starting up server routing...")
     mcp.run()
